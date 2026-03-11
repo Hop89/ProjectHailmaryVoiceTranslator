@@ -1,65 +1,52 @@
-import whisper
+import platform
+
+import numpy as np
 import pyaudio
-import wave
-import sys
-import tempfile
-from ctypes import *
+import whisper
 
-# Load the Whisper model once
-model = whisper.load_model("base.en")
 
-# Records audio directly from the microphone and then transcribes it to text using Whisper, returning that transcription.
-def transcribe_directly():
-    # Create a temporary file to store the recorded audio (this will be deleted once we've finished transcription)
-    temp_file = tempfile.NamedTemporaryFile(suffix=".wav")
+# Keep the default model light so local transcription stays responsive on Windows.
+model = whisper.load_model("tiny.en")
 
-    sample_rate = 16000
-    bits_per_sample = 16
+
+def transcribe_directly(duration_seconds=3, sample_rate=16000):
+    """Record a short microphone clip and transcribe it with Whisper."""
     chunk_size = 1024
     audio_format = pyaudio.paInt16
     channels = 1
 
-    def callback(in_data, frame_count, time_info, status):
-        wav_file.writeframes(in_data)
-        return None, pyaudio.paContinue
-
-    # Open the wave file for writing
-    wav_file = wave.open(temp_file.name, 'wb')
-    wav_file.setnchannels(channels)
-    wav_file.setsampwidth(bits_per_sample // 8)
-    wav_file.setframerate(sample_rate)
-
-    
-    ERROR_HANDLER_FUNC = CFUNCTYPE(None, c_char_p, c_int, c_char_p, c_int, c_char_p)
-    def py_error_handler(filename, line, function, err, fmt):
-        return
-
-    c_error_handler = ERROR_HANDLER_FUNC(py_error_handler)
-    asound = cdll.LoadLibrary('libasound.so')
-    asound.snd_lib_error_set_handler(c_error_handler)
-
-    # Initialize PyAudio
     audio = pyaudio.PyAudio()
 
-    # Start recording audio
-    stream = audio.open(format=audio_format,
-                        channels=channels,
-                        rate=sample_rate,
-                        input=True,
-                        frames_per_buffer=chunk_size,
-                        stream_callback=callback)
+    try:
+        stream = audio.open(
+            format=audio_format,
+            channels=channels,
+            rate=sample_rate,
+            input=True,
+            frames_per_buffer=chunk_size,
+        )
 
-    input("Press Enter to stop recording...")
-    # Stop and close the audio stream
-    stream.stop_stream()
-    stream.close()
-    audio.terminate()
+        print(
+            f"Recording for {duration_seconds} seconds on {platform.system()}..."
+        )
 
-    # Close the wave file
-    wav_file.close()
+        frames = []
+        total_chunks = int(sample_rate / chunk_size * duration_seconds)
+        for _ in range(total_chunks):
+            frames.append(stream.read(chunk_size, exception_on_overflow=False))
+    finally:
+        if "stream" in locals():
+            stream.stop_stream()
+            stream.close()
+        audio.terminate()
 
-    # And transcribe the audio to text (suppressing warnings about running on a CPU)
-    result = model.transcribe(temp_file.name, fp16=False)
-    temp_file.close()
+    audio_bytes = b"".join(frames)
+    audio_array = np.frombuffer(audio_bytes, dtype=np.int16).astype(np.float32)
+    audio_array /= 32768.0
 
+    result = model.transcribe(audio_array, fp16=False, language="en")
     return result["text"].strip()
+
+
+if __name__ == "__main__":
+    print(transcribe_directly())
