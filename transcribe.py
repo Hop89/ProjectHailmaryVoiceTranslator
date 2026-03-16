@@ -1,52 +1,77 @@
-import platform
+import argparse
+import wave
+from pathlib import Path
 
-import numpy as np
 import pyaudio
-import whisper
 
 
-# Keep the default model light so local transcription stays responsive on Windows.
-model = whisper.load_model("tiny.en")
-
-
-def transcribe_directly(duration_seconds=3, sample_rate=16000):
-    """Record a short microphone clip and transcribe it with Whisper."""
-    chunk_size = 1024
+def record_continuously(output_path, sample_rate=16000, chunk_size=1024):
+    """Continuously record microphone audio into a WAV file until stopped."""
     audio_format = pyaudio.paInt16
     channels = 1
+    output_file = Path(output_path)
+    output_file.parent.mkdir(parents=True, exist_ok=True)
 
     audio = pyaudio.PyAudio()
+    stream = audio.open(
+        format=audio_format,
+        channels=channels,
+        rate=sample_rate,
+        input=True,
+        frames_per_buffer=chunk_size,
+    )
+
+    wav_file = wave.open(str(output_file), "wb")
+    wav_file.setnchannels(channels)
+    wav_file.setsampwidth(audio.get_sample_size(audio_format))
+    wav_file.setframerate(sample_rate)
+
+    print(f"Recording to {output_file}. Press Ctrl+C to stop.")
 
     try:
-        stream = audio.open(
-            format=audio_format,
-            channels=channels,
-            rate=sample_rate,
-            input=True,
-            frames_per_buffer=chunk_size,
-        )
-
-        print(
-            f"Recording for {duration_seconds} seconds on {platform.system()}..."
-        )
-
-        frames = []
-        total_chunks = int(sample_rate / chunk_size * duration_seconds)
-        for _ in range(total_chunks):
-            frames.append(stream.read(chunk_size, exception_on_overflow=False))
+        while True:
+            data = stream.read(chunk_size, exception_on_overflow=False)
+            wav_file.writeframes(data)
+            # Keep the WAV header sizes in sync so the file remains readable.
+            wav_file._patchheader()
+    except KeyboardInterrupt:
+        print("\nRecording stopped.")
     finally:
-        if "stream" in locals():
-            stream.stop_stream()
-            stream.close()
+        wav_file.close()
+        stream.stop_stream()
+        stream.close()
         audio.terminate()
 
-    audio_bytes = b"".join(frames)
-    audio_array = np.frombuffer(audio_bytes, dtype=np.int16).astype(np.float32)
-    audio_array /= 32768.0
 
-    result = model.transcribe(audio_array, fp16=False, language="en")
-    return result["text"].strip()
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description="Continuously record microphone audio into a WAV file."
+    )
+    parser.add_argument(
+        "output",
+        nargs="?",
+        default="recordings/live_capture.wav",
+        help="Path to the WAV file to keep updating.",
+    )
+    parser.add_argument(
+        "--sample-rate",
+        type=int,
+        default=16000,
+        help="Microphone sample rate in Hz.",
+    )
+    parser.add_argument(
+        "--chunk-size",
+        type=int,
+        default=1024,
+        help="Number of frames per read from the microphone.",
+    )
+    return parser.parse_args()
 
 
 if __name__ == "__main__":
-    print(transcribe_directly())
+    args = parse_args()
+    record_continuously(
+        output_path=args.output,
+        sample_rate=args.sample_rate,
+        chunk_size=args.chunk_size,
+    )
