@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
+from translate import translate_notes_to_english
 
 
 A4_FREQUENCY = 440.0
@@ -214,10 +215,11 @@ def main():
 
     print(f"Input: {input_path}")
     if not notes:
-        print("Distinct notes: none detected")
+        print("No distinct notes were detected.")
         return
 
-    print("Distinct notes:", " ".join(notes))
+    english_translation = translate_notes_to_english(notes)
+    print(english_translation)
     print("\nDetected note events:")
     for event in events:
         print(f"{event.start:7.2f}s - {event.end:7.2f}s  {event.note}")
